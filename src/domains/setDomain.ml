@@ -504,12 +504,12 @@ struct
   let hash xs = fold (fun v a -> a + E.hash v) xs 0
   let compare x y =
     if equal x y
-      then 0
-      else
-        let caridnality_comp = compare (cardinal x) (cardinal y) in
-        if caridnality_comp <> 0
-          then caridnality_comp
-          else Map.compare (List.compare E.compare) x y
+    then 0
+    else
+      let caridnality_comp = compare (cardinal x) (cardinal y) in
+      if caridnality_comp <> 0
+      then caridnality_comp
+      else Map.compare (List.compare E.compare) x y
   let isSimple _ = false
   let short w x : string =
     let usable_length = w - 5 in
@@ -655,4 +655,241 @@ module Reverse (Base: S) =
 struct
   include Base
   include Lattice.Reverse (Base)
+end
+
+
+
+
+(** A functor for creating a simple INVERTED set domain, there is no BOTTOM element, and
+  * calling [bot ()] will raise an exception *)
+
+module InvertedMake (Base: Printable.S) =
+struct
+  include Printable.Blank
+  include BatSet.Make(Base)
+  let name () = "Inverted Set (" ^ Base.name () ^ ")"
+  let empty _ = empty
+  let leq a b = not (subset a b) || (equal a b)
+  let join = inter
+  let widen = join
+  let meet = union
+  let narrow = meet
+  let bot () = raise (Lattice.Unsupported "Set has no bot")
+  let is_bot _ = false
+  let top = empty
+  let is_top = is_empty
+
+  let map f s =
+    let add_to_it x s = add (f x) s in
+    fold add_to_it s (empty ())
+
+  let pretty_f _ () x =
+    let elts = elements x in
+    let content = List.map (Base.pretty ()) elts in
+    let rec separate x =
+      match x with
+      | [] -> []
+      | [x] -> [x]
+      | (x::xs) -> x ++ (text ", ") :: separate xs
+    in
+    let separated = separate content in
+    let content = List.fold_left (++) nil separated in
+    (text "{") ++ content ++ (text "}")
+
+  (** Short summary for sets. *)
+  let short w x : string =
+    let usable_length = w - 5 in
+    let all_elems : string list = List.map (Base.short usable_length) (elements x) in
+    Printable.get_short_list "{" "}" usable_length all_elems
+
+  let to_yojson x = [%to_yojson: Base.t list] (elements x)
+
+  let pretty () x = pretty_f short () x
+
+  let equal x y =
+    cardinal x = cardinal y
+    && for_all (fun e -> exists (Base.equal e) y) x
+
+  let isSimple x =
+    (List.length (elements x)) < 3
+
+  let hash x = fold (fun x y -> y + Base.hash x) x 0
+
+  let pretty_diff () ((x:t),(y:t)): Pretty.doc =
+    if leq x y then dprintf "%s: These are fine!" (name ()) else
+    if is_bot y then dprintf "%s: %a instead of bot" (name ()) pretty x else begin
+      let evil = choose (diff x y) in
+      let other = choose y in
+      Pretty.dprintf "%s: %a not leq %a\n  @[because %a@]" (name ()) pretty x pretty y
+        Base.pretty_diff (evil,other)
+    end
+  let printXml f xs =
+    BatPrintf.fprintf f "<value>\n<set>\n";
+    iter (Base.printXml f) xs;
+    BatPrintf.fprintf f "</set>\n</value>\n"
+
+  let arbitrary () = QCheck.map ~rev:elements of_list @@ QCheck.small_list (Base.arbitrary ())
+end
+
+
+(** Auxiliary signature for naming the top element *)
+module type BottedSetNames =
+sig
+  val botname: string
+end
+
+(** Functor for creating artificially botted (inverted topped) set domains. *)
+module BottedSet (Base: Printable.S) (N: BottedSetNames) =
+struct
+  (* Is this inverted make even required? *)
+  module S = InvertedMake (Base)
+  include Printable.Blank
+  type t = All | Set of S.t [@@deriving to_yojson]
+  type elt = Base.t
+
+  let hash = function
+    | All -> 999999
+    | Set x -> S.hash x
+  let name () = "Botted " ^ S.name ()
+  let equal x y =
+    match x, y with
+    | All, All -> true
+    | Set x, Set y -> S.equal x y
+    | _ -> false
+
+  let compare x y = (* Is this correct when inverted? *)
+    match (x, y) with
+    | All, All -> 0
+    | All, Set _ -> 1
+    | Set _, All -> -1
+    | Set x, Set y -> S.compare x y
+
+  let empty () = Set (S.empty ())
+  let is_empty x =
+    match x with
+    | All -> false
+    | Set x -> S.is_empty x
+  let mem x s =
+    match s with
+    | All -> true
+    | Set s -> S.mem x s
+  let add x s =
+    match s with
+    | All -> All
+    | Set s -> Set (S.add x s)
+  let singleton x = Set (S.singleton x)
+  let remove x s =
+    match s with
+    | All -> All   (* NB! NB! NB! *)
+    | Set s -> Set (S.remove x s)
+  let union x y =
+    match x, y with
+    | All, _ -> All
+    | _, All -> All
+    | Set x, Set y -> Set (S.union x y)
+  let inter x y =
+    match x, y with
+    | All, y -> y
+    | x, All -> x
+    | Set x, Set y -> Set (S.inter x y)
+  let diff x y =
+    match x, y with
+    | x, All -> empty ()
+    | All, y -> All (* NB! NB! NB! *)
+    | Set x, Set y -> Set (S.diff x y)
+  let subset x y =
+    match x, y with
+    | _, All -> true
+    | All, _ -> false
+    | Set x, Set y -> S.subset x y
+
+  let schema normal abnormal x =
+    match x with
+    | All -> raise (Unsupported abnormal)
+    | Set t -> normal t
+  let schema_default v f = function
+    | All -> v
+    | Set x -> f x
+  (* HACK! Map is an exception in that it doesn't throw an exception! *)
+  let map f x =
+    match x with
+    | All -> All
+    | Set t -> Set (S.map f t)
+
+  let iter f = schema (S.iter f) "iter on All"
+  (*  let map f = schema (fun t -> Set (S.map f t)) "map"*)
+  let fold f x e = schema (fun t -> S.fold f t e) "fold on All" x
+  let for_all f = schema_default false (S.for_all f)
+  let exists f = schema_default true (S.exists f)
+  let filter f = schema (fun t -> Set (S.filter f t)) "filter on All"
+  let elements = schema S.elements "elements on All"
+  let of_list xs = Set (List.fold_right S.add xs (S.empty ()))
+  let cardinal = schema S.cardinal "cardinal on All"
+  let min_elt = schema S.min_elt "min_elt on All"
+  let max_elt = schema S.max_elt "max_elt on All"
+  let choose = schema S.choose "choose on All"
+  let partition f = schema (fun t -> match S.partition f t
+                             with (a,b) -> (Set a, Set b)) "filter on All"
+  let split e = schema (fun t -> match S.split e t
+                         with (a,tv,b) -> (Set a,tv,Set b)) "split on All"
+
+
+  (* The printable implementation *)
+
+  let pretty_f _ () x =
+    match x with
+    | All -> text N.botname
+    | Set t -> S.pretty () t
+
+  let short w x : string =
+    match x with
+    | All -> N.botname
+    | Set t -> S.short w t
+
+  let isSimple x =
+    match x with
+    | All -> true
+    | Set t -> S.isSimple t
+
+  let pretty () x = pretty_f short () x
+
+
+  (* Lattice implementation *)
+  let bot () = All
+  let is_bot x = x = All
+  let top = empty
+  let is_top = is_empty
+
+  let leq a b = not (subset a b) || (equal a b)
+  let join = inter
+  let widen = join
+  let meet = union
+  let narrow = meet
+
+  let pretty_diff () ((x:t),(y:t)): Pretty.doc =
+    match x,y with
+    | Set x, Set y -> S.pretty_diff () (x,y)
+    | _ -> dprintf "%s: %a not leq %a" (name ()) pretty x pretty y
+  let printXml f = function
+    | All   -> BatPrintf.fprintf f "<value>\n<data>\nAll\n</data>\n</value>\n"
+    | Set s ->
+      BatPrintf.fprintf f "<value><set>\n" ;
+      S.iter (Base.printXml f) s;
+      BatPrintf.fprintf f "</set></value>\n"
+
+  let invariant c = function
+    | All -> Invariant.none
+    | Set s -> S.invariant c s
+
+  let arbitrary () =
+    let set x = Set x in
+    let open QCheck.Iter in
+    let shrink = function
+      | Set x -> MyCheck.shrink (S.arbitrary ()) x >|= set
+      | All -> MyCheck.Iter.of_arbitrary ~n:20 (S.arbitrary ()) >|= set
+    in
+    QCheck.frequency ~shrink ~print:(short 10000) [ (* S TODO: better way to define printer? *)
+      20, QCheck.map set (S.arbitrary ());
+      1, QCheck.always All
+    ] (* S TODO: decide frequencies *)
 end
