@@ -26,3 +26,5 @@ end
 module Simple (Val: Lattice.S): S with type value = Val.t and type field = fieldinfo
 (** Creates a simple structure domain by mapping fieldnames to their values
   * using the {!MapDomain.InfMap} functor *)
+
+module SimpleSets (Val: Lattice.S): S with type value = Val.t and type field = fieldinfo

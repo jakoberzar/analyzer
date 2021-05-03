@@ -93,3 +93,89 @@ struct
     | Index (i, offset) ->
       Invariant.none
 end
+
+module SimpleSets (Val: Lattice.S) =
+struct
+  include Printable.Std
+  module M = MapDomain.MapTop (Basetype.CilField) (Val)
+  module SS = Simple (Val)
+  module SD = SetDomain.ToppedSet (SS) (struct let topname = "All Possible Component Values" end)
+  let name () = "simple set structs"
+  type t = SD.t [@@deriving to_yojson]
+  type field = fieldinfo
+  type value = SS.value
+
+  (** Short summary for structs *)
+  (* from int->tmap->string to int->t->string *)
+  let short w mapping = SD.short w mapping
+
+  let for_all_common_bindings (pred: (value -> value -> bool)) (x:t) (y:t) =
+    SD.for_all (fun sy -> SD.for_all (fun s -> SS.for_all_common_bindings pred s sy) x) y
+
+
+  let pretty_f sf = SD.pretty_f sf
+  let pretty () x = SD.pretty_f short () x
+  let replace s field value = SD.map (fun s -> SS.replace s field value) s
+  let get s field =
+    if SD.is_empty s
+    then Val.top ()
+    else SD.fold (fun ss acc -> Val.join acc (SS.get ss field)) s (Val.bot ())
+
+  let on_joint_ss f s =
+    let elements = SD.elements s in
+    let jointSS = match elements with
+      | [] -> SS.top ()
+      | [x] -> x
+      | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
+    in f jointSS
+
+  let fold f = on_joint_ss (SS.fold f)
+
+  let map f s = SD.singleton (on_joint_ss (SS.map f) s)
+
+  let cardinal = on_joint_ss (SS.cardinal)
+  let keys = on_joint_ss (SS.keys)
+
+  (* Add these or the byte code will segfault ... *)
+  let equal x y = SD.equal x y
+  let compare x y = SD.compare x y
+  let is_top x = SD.for_all (SS.is_top) x
+  let top () = SD.singleton (SS.top ())
+  let is_bot x = SD.for_all (SS.is_bot) x
+  let bot () = SD.singleton (SS.bot ())
+  let meet x y = SD.meet x y
+  (* let meet x y = let result = SD.meet x y in ignore (Pretty.printf "Meet - x is: %a\ny is: %a\nResult is: %a\n-------\n" SD.pretty x SD.pretty y SD.pretty result); result *)
+  let join x y = SD.join x y
+  let leq x y = SD.leq x y
+  let isSimple x = SD.isSimple x
+  let hash x = SD.hash x
+  let widen = SD.widen
+  let narrow = SD.narrow
+  (* let narrow x y = let result = SD.narrow x y in ignore (Pretty.printf "Narrowing - x is: %a\ny is: %a\nResult is: %a\n-------\n" SD.pretty x SD.pretty y SD.pretty result); result *)
+  let pretty_diff () (x,y) =
+    Pretty.dprintf "{@[%a@] ...}" SD.pretty_diff (x,y)
+  let printXml f xs = SD.printXml f xs
+  let widen_with_fct _ = SD.widen
+  let leq_with_fct _ = SD.leq
+  let join_with_fct _ = SD.join
+
+  let invariant c x = SD.invariant c x
+  (* match c.Invariant.offset with
+      (* invariants for all fields *)
+      | NoOffset -> Invariant.none
+      (* let c_lval = BatOption.get c.Invariant.lval in
+      fold (fun f v acc ->
+          let f_lval = Cil.addOffsetLval (Field (f, NoOffset)) c_lval in
+          let f_c = {c with lval=Some f_lval} in
+          let i = Val.invariant f_c v in
+          Invariant.(acc && i)
+        ) x Invariant.none *)
+      (* invariant for one field *)
+      | Field (f, offset) ->
+        let f_c = {c with offset} in
+        let v = get x f in
+        Val.invariant f_c v
+      (* invariant for one index *)
+      | Index (i, offset) ->
+        Invariant.none *)
+end
