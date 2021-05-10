@@ -1,23 +1,9 @@
-#include "stdio.h"
-#include "string.h"
-#include "stdlib.h"
-#include "pthread.h"
-
-struct FunctionInfo functionToRun;
-
 struct FunctionInfo {
-    const char *name;
     void* ptr;
     int id;
 };
 
-struct Args {
-    int choice;
-    int n;
-};
-
-pthread_t id[2];
-pthread_mutex_t lock;
+struct FunctionInfo functionToRun;
 
 /// Finds the factorial of given number
 int factorial(int n) {
@@ -41,24 +27,23 @@ int inverseFactorial(int fac) {
     return n;
 }
 
-void *runCode(void *arguments) {
-    struct Args *args = arguments;
-    int n = args->n;
-    int choice = args->choice;
 
-    pthread_mutex_lock(&lock);
+int main() {
+    int n;
+    int choice;
+    int test;
+
+    // functionToRun.id = 1;
+    // functionToRun.ptr = factorial;
+    // test = 1;
     if (choice == 1) {
         functionToRun.id = 1;
-        functionToRun.name = "factorial";
         functionToRun.ptr = factorial;
-    } else if (choice == 2) {
-        functionToRun.id = 2;
-        functionToRun.name = "inverse factorial";
-        functionToRun.ptr = inverseFactorial;
+        test = 1;
     } else {
-        functionToRun.id = 3;
-        functionToRun.name = "outside function";
-        functionToRun.ptr = exit;
+        functionToRun.id = 2;
+        functionToRun.ptr = inverseFactorial;
+        test = 2;
     }
 
     typedef int (*fun)(int);
@@ -77,31 +62,6 @@ void *runCode(void *arguments) {
         printf("Exiting with code %d...\n", n);
         int result = f(n);
     }
-    pthread_mutex_unlock(&lock);
-    return 0;
-}
-
-
-int main() {
-    int n;
-    int choice;
-    printf("Write the function to execute (1 for factorial, 2 for inverse of factorial) and pass the parameter n:\n");
-    scanf("%d %d", &choice, &n);
-
-    struct Args *args = malloc(sizeof(struct Args));
-    args->n = n;
-    args->choice = choice;
-
-
-    pthread_create(&id[0], NULL, (void*)runCode, (void*)args);
-    for (int i = 0; i < 5; i++) {
-        printf("Calculating...\n");
-    }
-
-    int res;
-    pthread_join(id[0], (void**)&res);
-
-    free(args);
 
     return 0;
 }
