@@ -996,7 +996,7 @@ struct
   (** [set st addr val] returns a state where [addr] is set to [val]
   * it is always ok to put None for lval_raw and rval_raw, this amounts to not using/maintaining
   * precise information about arrays. *)
-  let set a ?(ctx=None) ?(effect=true) ?(change_array=true) ?lval_raw ?rval_raw ?t_override (gs:glob_fun) (st: store) (lval: AD.t) (lval_type: Cil.typ) (value: value) : store =
+  let set a ?(ctx=None) ?(effect=true) ?(change_array=true) ?lval_raw ?rval_raw ?t_override ?(refine=false) (gs:glob_fun) (st: store) (lval: AD.t) (lval_type: Cil.typ) (value: value) : store =
     let update_variable x t y z =
       if M.tracing then M.tracel "setosek" ~var:x.vname "update_variable: start '%s' '%a'\nto\n%a\n\n" x.vname VD.pretty y CPA.pretty z;
       let r = update_variable x t y z in (* refers to defintion that is outside of set *)
@@ -1041,13 +1041,13 @@ struct
       if (!GU.earlyglobs || ThreadFlag.is_multi a) && is_global a x then begin
         if M.tracing then M.tracel "setosek" ~var:x.vname "update_one_addr: update a global var '%s' ...\n" x.vname;
         let var = Priv.read_global a gs st x in
-        let r = Priv.write_global ~invariant:(not effect) a gs (Option.get ctx).sideg st x (VD.update_offset a var offs value lval_raw (Var x, cil_offset) t) in
+        let r = Priv.write_global ~invariant:(not effect) a gs (Option.get ctx).sideg st x (VD.update_offset ~refine a var offs value lval_raw (Var x, cil_offset) t) in
         if M.tracing then M.tracel "setosek" ~var:x.vname "update_one_addr: updated a global var '%s' \nstate:%a\n\n" x.vname D.pretty r;
         r
       end else begin
         if M.tracing then M.tracel "setosek" ~var:x.vname "update_one_addr: update a local var '%s' ...\n" x.vname;
         (* Normal update of the local state *)
-        let new_value = VD.update_offset a (CPA.find x st.cpa) offs value lval_raw ((Var x), cil_offset) t in
+        let new_value = VD.update_offset ~refine a (CPA.find x st.cpa) offs value lval_raw ((Var x), cil_offset) t in
         (* what effect does changing this local variable have on arrays -
            we only need to do this here since globals are not allowed in the
            expressions for partitioning *)
@@ -1447,7 +1447,7 @@ struct
     in
     let eval e st = eval_rv a gs st e in
     let eval_bool e st = match eval e st with `Int i -> ID.to_bool i | _ -> None in
-    let set' lval v st = set a gs st (eval_lv a gs st lval) (Cil.typeOfLval lval) v ~effect:false ~change_array:false ~ctx:(Some ctx) in
+    let set' lval v st = set a gs st (eval_lv a gs st lval) (Cil.typeOfLval lval) v ~refine:true ~effect:false ~change_array:false ~ctx:(Some ctx) in
     let rec inv_exp c exp (st:store): store =
       (* trying to improve variables in an expression so it is bottom means dead code *)
       if ID.is_bot c then raise Deadcode;

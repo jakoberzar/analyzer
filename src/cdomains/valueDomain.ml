@@ -17,7 +17,7 @@ sig
   include Lattice.S
   type offs
   val eval_offset: Q.ask -> (AD.t -> t) -> t-> offs -> exp option -> lval option -> typ -> t
-  val update_offset: Q.ask -> t -> offs -> t -> exp option -> lval -> typ -> t
+  val update_offset: ?refine:bool -> Q.ask -> t -> offs -> t -> exp option -> lval -> typ -> t
   val update_array_lengths: (exp -> t) -> t -> Cil.typ -> t
   val affect_move: ?replace_with_const:bool -> Q.ask -> t -> varinfo -> (exp -> int option) -> t
   val affecting_vars: t -> varinfo list
@@ -849,7 +849,7 @@ struct
     in
     do_eval_offset ask f x offs exp l o v t
 
-  let update_offset (ask: Q.ask) (x:t) (offs:offs) (value:t) (exp:exp option) (v:lval) (t:typ): t =
+  let update_offset ?(refine=false) (ask: Q.ask) (x:t) (offs:offs) (value:t) (exp:exp option) (v:lval) (t:typ): t =
     let rec do_update_offset (ask:Q.ask) (x:t) (offs:offs) (value:t) (exp:exp option) (l:lval option) (o:offset option) (v:lval) (t:typ):t =
       let mu = function `Blob (`Blob (y, s', orig), s, orig2) -> `Blob (y, ID.join s s',orig) | x -> x in
       match x, offs with
@@ -884,13 +884,14 @@ struct
             | _ -> value
           end
         | `Field (fld, offs) when fld.fcomp.cstruct -> begin
+            let updateStruct = if refine then Structs.refine else Structs.replace in
             let t = fld.ftype in
             match x with
             | `Struct str ->
               begin
                 let l', o' = shift_one_over l o in
                 let value' = do_update_offset ask (Structs.get str fld) offs value exp l' o' v t in
-                `Struct (Structs.replace str fld value')
+                `Struct (updateStruct str fld value')
               end
             | `Bot ->
               let init_comp compinfo =

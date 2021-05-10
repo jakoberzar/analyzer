@@ -7,6 +7,7 @@ sig
   type field
   val get: t -> field -> value
   val replace: t -> field -> value -> t
+  val refine: t -> field -> value -> t
   val fold: (field -> value -> 'a -> 'a) -> t -> 'a -> 'a
   val for_all_common_bindings: (value -> value -> bool) -> t -> t -> bool
   val map: (value -> value) -> t -> t
@@ -46,6 +47,7 @@ struct
   let pretty_f sf = M.pretty_f sf
   let pretty () x = M.pretty_f short () x
   let replace s field value = M.add field value s
+  let refine = replace
   let get s field = M.find field s
   let fold = M.fold
   let map = M.map
@@ -115,7 +117,20 @@ struct
 
   let pretty_f sf = SD.pretty_f sf
   let pretty () x = SD.pretty_f short () x
-  let replace s field value = SD.map (fun s -> SS.replace s field value) s
+  (* let replace s field value =
+    SD.map (fun s -> SS.replace s field value) s *)
+  let replace s field value =
+    let result = SD.map (fun s -> SS.replace s field value) s in
+    if Messages.tracing then Messages.tracel "bot-fail" "Replace - s is: %a\nfield is: %a\nvalue is: %a\nresult is: %a\n-------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty result;
+    result
+
+  let refine s field value =
+    let filtered = SD.filter (fun s -> Val.leq (SS.get s field) value) s in
+    let result = SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) filtered in
+    if SD.is_empty result then raise Deadcode;
+    if Messages.tracing then Messages.tracel "bot-fail" "Refine - s is: %a\nfield is: %a\nvalue is: %a\nfiltered is: %a\nresult is: %a\n-------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty filtered SD.pretty result;
+    result
+
   let get s field =
     if SD.is_empty s
     then Val.top ()
