@@ -168,14 +168,17 @@ struct
   let bot () = SD.singleton (SS.bot ())
   let join x y =
     let setJoined = SD.join x y in
-    let limit = 5 in
+    let limit = 10 in
     let result =
       if SD.cardinal setJoined < limit
       then setJoined
       else SD.singleton (joinSS setJoined)
     in
     result
-  let leq x y = SD.leq x y
+  let leq x y =
+    let left = joinSS x in
+    let right = joinSS y in
+    SS.leq left right
   let isSimple x = SD.isSimple x
   let hash x = SD.hash x
   let widen = SD.widen
