@@ -124,10 +124,16 @@ struct
     if Messages.tracing then Messages.tracel "bot-fail" "Replace - s is: %a\nfield is: %a\nvalue is: %a\nresult is: %a\n-------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty result;
     result
 
+  let replaceIfLower s field value =
+    let result = SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) s in
+    result
+
   let refine s field value =
-    let filtered = SD.filter (fun s -> Val.leq (SS.get s field) value) s in
-    let result = SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) filtered in
-    if SD.is_empty result then raise Deadcode;
+    let instanceComparable ss =
+      let current = SS.get ss field in
+      Val.leq value current || Val.leq current value in
+    let filtered = SD.filter instanceComparable s in
+    let result = replaceIfLower filtered field value in
     if Messages.tracing then Messages.tracel "bot-fail" "Refine - s is: %a\nfield is: %a\nvalue is: %a\nfiltered is: %a\nresult is: %a\n-------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty filtered SD.pretty result;
     result
 
@@ -136,13 +142,15 @@ struct
     then Val.top ()
     else SD.fold (fun ss acc -> Val.join acc (SS.get ss field)) s (Val.bot ())
 
-  let on_joint_ss f s =
+
+  let joinSS s =
     let elements = SD.elements s in
-    let jointSS = match elements with
+    match elements with
       | [] -> SS.top ()
       | [x] -> x
       | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
-    in f jointSS
+
+  let on_joint_ss f s = f (joinSS s)
 
   let fold f = on_joint_ss (SS.fold f)
 
@@ -158,9 +166,15 @@ struct
   let top () = SD.singleton (SS.top ())
   let is_bot x = SD.for_all (SS.is_bot) x
   let bot () = SD.singleton (SS.bot ())
-  let meet x y = SD.meet x y
-  (* let meet x y = let result = SD.meet x y in ignore (Pretty.printf "Meet - x is: %a\ny is: %a\nResult is: %a\n-------\n" SD.pretty x SD.pretty y SD.pretty result); result *)
-  let join x y = SD.join x y
+  let join x y =
+    let setJoined = SD.join x y in
+    let limit = 5 in
+    let result =
+      if SD.cardinal setJoined < limit
+      then setJoined
+      else SD.singleton (joinSS setJoined)
+    in
+    result
   let leq x y = SD.leq x y
   let isSimple x = SD.isSimple x
   let hash x = SD.hash x
@@ -170,9 +184,9 @@ struct
   let pretty_diff () (x,y) =
     Pretty.dprintf "{@[%a@] ...}" SD.pretty_diff (x,y)
   let printXml f xs = SD.printXml f xs
-  let widen_with_fct _ = SD.widen
-  let leq_with_fct _ = SD.leq
-  let join_with_fct _ = SD.join
+  let widen_with_fct _ = widen
+  let leq_with_fct _ = leq
+  let join_with_fct _ = join
 
   let invariant c x = SD.invariant c x
   (* match c.Invariant.offset with

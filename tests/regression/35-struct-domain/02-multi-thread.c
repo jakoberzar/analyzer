@@ -1,3 +1,4 @@
+#include "assert.h"
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
@@ -64,15 +65,18 @@ void *runCode(void *arguments) {
     if (functionToRun.id == 1) {
     // if (strcmp(functionToRun.name, "factorial") == 0) {
         fun f = functionToRun.ptr;
+        assert(f == factorial); // UNKNOWN!
         int result = f(n);
         printf("Factorial of %d is %d\n", n, result);
     } else if (functionToRun.id == 2) {
     // } else if (strcmp(functionToRun.name, "inverse factorial") == 0) {
         fun f = functionToRun.ptr;
+        assert(f == inverseFactorial); // UNKNOWN!
         int result = f(n);
         printf("Factorial of %d is %d\n", result, n);
     } else {
         fun f = functionToRun.ptr;
+        assert((void*)f == exit); // UNKNOWN!
         printf("Exiting with code %d...\n", n);
         int result = f(n);
     }

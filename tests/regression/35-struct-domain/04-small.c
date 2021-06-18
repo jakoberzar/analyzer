@@ -1,3 +1,6 @@
+#include "assert.h"
+#include "stdio.h"
+
 struct FunctionInfo {
     void* ptr;
     int id;
@@ -50,11 +53,13 @@ int main() {
     if (functionToRun.id == 1) {
     // if (strcmp(functionToRun.name, "factorial") == 0) {
         fun f = functionToRun.ptr;
+        assert(f == factorial);
         int result = f(n);
         printf("Factorial of %d is %d\n", n, result);
     } else if (functionToRun.id == 2) {
     // } else if (strcmp(functionToRun.name, "inverse factorial") == 0) {
         fun f = functionToRun.ptr;
+        assert(f == inverseFactorial);
         int result = f(n);
         printf("Factorial of %d is %d\n", result, n);
     } else {
