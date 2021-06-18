@@ -114,43 +114,39 @@ struct
   let for_all_common_bindings (pred: (value -> value -> bool)) (x:t) (y:t) =
     SD.for_all (fun sy -> SD.for_all (fun s -> SS.for_all_common_bindings pred s sy) x) y
 
-
   let pretty_f sf = SD.pretty_f sf
   let pretty () x = SD.pretty_f short () x
-  (* let replace s field value =
-    SD.map (fun s -> SS.replace s field value) s *)
+
   let replace s field value =
-    let result = SD.map (fun s -> SS.replace s field value) s in
-    if Messages.tracing then Messages.tracel "bot-fail" "Replace - s is: %a\nfield is: %a\nvalue is: %a\nresult is: %a\n-------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty result;
-    result
+    SD.map (fun s -> SS.replace s field value) s
 
-  let replaceIfLower s field value =
-    let result = SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) s in
-    result
+  let replace_if_lower s field value =
+    SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) s
 
-  let refine s field value =
-    let instanceComparable ss =
+  (* Get a set of all variants that include this field value  *)
+  let including_variants s field value =
+    let variant_comparable ss =
       let current = SS.get ss field in
       Val.leq value current || Val.leq current value in
-    let filtered = SD.filter instanceComparable s in
-    let result = replaceIfLower filtered field value in
-    if Messages.tracing then Messages.tracel "bot-fail" "Refine - s is: %a\nfield is: %a\nvalue is: %a\nfiltered is: %a\nresult is: %a\n-------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty filtered SD.pretty result;
-    result
+    SD.filter variant_comparable s
+
+  let refine s field value =
+    let including_set = including_variants s field value in
+    replace_if_lower including_set field value
 
   let get s field =
     if SD.is_empty s
     then Val.top ()
     else SD.fold (fun ss acc -> Val.join acc (SS.get ss field)) s (Val.bot ())
 
-
-  let joinSS s =
+  let join_ss s =
     let elements = SD.elements s in
     match elements with
       | [] -> SS.top ()
       | [x] -> x
       | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
 
-  let on_joint_ss f s = f (joinSS s)
+  let on_joint_ss f s = f (join_ss s)
 
   let fold f = on_joint_ss (SS.fold f)
 
@@ -166,19 +162,130 @@ struct
   let top () = SD.singleton (SS.top ())
   let is_bot x = SD.for_all (SS.is_bot) x
   let bot () = SD.singleton (SS.bot ())
-  let join x y =
+  let meet x y = SD.meet x y
+  let join = SD.join
+  let leq = SD.leq
+
+  let isSimple x = SD.isSimple x
+  let hash x = SD.hash x
+  let widen = SD.widen
+  let narrow = SD.narrow
+
+  let pretty_diff () (x,y) =
+    Pretty.dprintf "{@[%a@] ...}" SD.pretty_diff (x,y)
+  let printXml f xs = SD.printXml f xs
+
+  (* Ignore the function which should widen/leq/join by the struct components, as that
+     would break the set domain ordering or destroy the precision.
+     The consequence of this is that partitioned arrays aren't working with simple set structs. *)
+  let widen_with_fct _ = widen
+  let leq_with_fct _ = leq
+  let join_with_fct _ = join
+
+  let invariant c x = SD.invariant c x
+end
+
+module BetterSets (Val: Lattice.S) =
+struct
+  include Printable.Std
+  module M = MapDomain.MapTop (Basetype.CilField) (Val)
+  module SS = Simple (Val)
+  module SD = SetDomain.ToppedSet (SS) (struct let topname = "All Possible Component Values" end)
+  let name () = "better set structs"
+  type t = SD.t [@@deriving to_yojson]
+  type field = fieldinfo
+  type value = SS.value
+
+  (** Short summary for structs *)
+  (* from int->tmap->string to int->t->string *)
+  let short w mapping = SD.short w mapping
+
+  let for_all_common_bindings (pred: (value -> value -> bool)) (x:t) (y:t) =
+    SD.for_all (fun sy -> SD.for_all (fun s -> SS.for_all_common_bindings pred s sy) x) y
+
+  let pretty_f sf = SD.pretty_f sf
+  let pretty () x = SD.pretty_f short () x
+
+  let replace s field value =
+    SD.map (fun s -> SS.replace s field value) s
+
+  let replace_if_lower s field value =
+    SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) s
+
+  (* Get a set of all variants that include this field value  *)
+  let including_variants s field value =
+    let variant_comparable ss =
+      let current = SS.get ss field in
+      Val.leq value current || Val.leq current value in
+    SD.filter variant_comparable s
+
+  let refine s field value =
+    let including_set = including_variants s field value in
+    replace_if_lower including_set field value
+
+  let get s field =
+    if SD.is_empty s
+    then Val.top ()
+    else SD.fold (fun ss acc -> Val.join acc (SS.get ss field)) s (Val.bot ())
+
+  let join_ss s =
+    let elements = SD.elements s in
+    match elements with
+      | [] -> SS.top ()
+      | [x] -> x
+      | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
+
+  let on_joint_ss f s = f (join_ss s)
+
+  let fold f = on_joint_ss (SS.fold f)
+
+  let map f s = SD.singleton (on_joint_ss (SS.map f) s)
+
+  let cardinal = on_joint_ss (SS.cardinal)
+  let keys = on_joint_ss (SS.keys)
+
+  (* Add these or the byte code will segfault ... *)
+  let equal x y = SD.equal x y
+  let compare x y = SD.compare x y
+  let is_top x = SD.for_all (SS.is_top) x
+  let top () = SD.singleton (SS.top ())
+  let is_bot x = SD.for_all (SS.is_bot) x
+  let bot () = SD.singleton (SS.bot ())
+  let meet x y = SD.meet x y
+  let joinNew x y =
     let setJoined = SD.join x y in
     let limit = 10 in
     let result =
       if SD.cardinal setJoined < limit
       then setJoined
-      else SD.singleton (joinSS setJoined)
+      else SD.singleton (join_ss setJoined)
     in
     result
-  let leq x y =
-    let left = joinSS x in
-    let right = joinSS y in
+
+  let join = SD.join
+  (* let join = joinNew *)
+
+  let leqOld x y =
+    let left = join_ss x in
+    let right = join_ss y in
     SS.leq left right
+
+  let leqNew x y =
+    (* Filter out any variants that are in both x and y; those are equal *)
+    let differentVariants = SD.diff x y in
+    (* Check that every x variant is leq compared to y *)
+    let variantIsLeq variant =
+      let fieldsImproved field value =
+        let includingSet = including_variants y field value in
+        M.for_all (fun field value -> Val.leq value (get includingSet field)) variant
+      in
+      M.for_all fieldsImproved variant
+    in
+    SD.for_all variantIsLeq differentVariants
+
+  let leq = SD.leq
+  (* let leq = leqNew *)
+
   let isSimple x = SD.isSimple x
   let hash x = SD.hash x
   let widen = SD.widen
