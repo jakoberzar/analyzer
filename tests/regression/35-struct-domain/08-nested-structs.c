@@ -7,8 +7,8 @@ struct FunctionInfo {
 };
 
 struct Task {
-    struct FunctionInfo f;
     int arg;
+    struct FunctionInfo f;
     int taskId;
 };
 

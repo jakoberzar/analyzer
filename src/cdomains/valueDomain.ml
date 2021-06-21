@@ -1050,7 +1050,7 @@ struct
 end
 
 and Structs: StructDomain.S with type field = fieldinfo and type value = Compound.t =
-  StructDomain.SimpleSets (Compound)
+  StructDomain.BetterSets (Compound)
 
 and Unions: Lattice.S with type t = UnionDomain.Field.t * Compound.t =
   UnionDomain.Simple (Compound)

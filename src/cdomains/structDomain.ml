@@ -206,18 +206,67 @@ struct
   let pretty_f sf = SD.pretty_f sf
   let pretty () x = SD.pretty_f short () x
 
-  let replace s field value =
-    SD.map (fun s -> SS.replace s field value) s
+  let join_ss s =
+    let elements = SD.elements s in
+    match elements with
+      | [] -> SS.top ()
+      | [x] -> x
+      | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
 
-  let replace_if_lower s field value =
-    SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) s
+  let on_joint_ss f s = f (join_ss s)
+
+  let joint_variants s = SD.singleton (join_ss s)
+
+  let cardinal = on_joint_ss (SS.cardinal)
+  let keys = on_joint_ss (SS.keys)
+
+  let find_key_field s =
+    let existing_keys = keys s in
+    if List.length existing_keys == 0
+    then None
+    else
+      let first_existing_key = List.hd existing_keys in
+      let struct_fields = first_existing_key.fcomp.cfields in
+      let first_key = List.hd struct_fields in
+      Some first_key
+
+  let replace s field value =
+    let result_replace = SD.map (fun s -> SS.replace s field value) s in
+    let result_key =
+      match find_key_field s with
+        | None -> result_replace
+        | Some key ->
+          if Basetype.CilField.equal key field
+          then joint_variants result_replace (* Key is now the same in all variants *)
+          else result_replace
+    in
+    result_key
+
+
+  (* Check if a given ss variant is comparable with given value in given field *)
+  let variant_comparable field value ss =
+    let current = SS.get ss field in
+    Val.leq value current || Val.leq current value
 
   (* Get a set of all variants that include this field value  *)
   let including_variants s field value =
-    let variant_comparable ss =
-      let current = SS.get ss field in
-      Val.leq value current || Val.leq current value in
-    SD.filter variant_comparable s
+    SD.filter (variant_comparable field value) s
+
+  let replace_if_lower s field value =
+    let result_replace = SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) s in
+    (* let result_key =
+      let join_comparable_key_variants s =
+        let (comparable, unique) = SD.partition (variant_comparable field value) s in
+        SD.join unique (joint_variants comparable)
+      in
+      match find_key_field s with
+        | None -> result_replace
+        | Some key ->
+          if key = field
+          then join_comparable_key_variants result_replace (* Key is now the same in all variants *)
+          else result_replace
+    in result_key *)
+    result_replace
 
   let refine s field value =
     let including_set = including_variants s field value in
@@ -228,21 +277,9 @@ struct
     then Val.top ()
     else SD.fold (fun ss acc -> Val.join acc (SS.get ss field)) s (Val.bot ())
 
-  let join_ss s =
-    let elements = SD.elements s in
-    match elements with
-      | [] -> SS.top ()
-      | [x] -> x
-      | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
-
-  let on_joint_ss f s = f (join_ss s)
-
   let fold f = on_joint_ss (SS.fold f)
 
   let map f s = SD.singleton (on_joint_ss (SS.map f) s)
-
-  let cardinal = on_joint_ss (SS.cardinal)
-  let keys = on_joint_ss (SS.keys)
 
   (* Add these or the byte code will segfault ... *)
   let equal x y = SD.equal x y
@@ -251,52 +288,189 @@ struct
   let top () = SD.singleton (SS.top ())
   let is_bot x = SD.for_all (SS.is_bot) x
   let bot () = SD.singleton (SS.bot ())
-  let meet x y = SD.meet x y
-  let joinNew x y =
-    let setJoined = SD.join x y in
-    let limit = 10 in
-    let result =
-      if SD.cardinal setJoined < limit
-      then setJoined
-      else SD.singleton (join_ss setJoined)
+  let meet x y =
+    match find_key_field x with
+    | None -> y
+    | Some key ->
+    let meet_variant ss y =
+      let value = SS.get ss key in
+      (* Find all comparable variants in y *)
+      let yss = including_variants y key value in
+      if SD.is_empty yss
+      then SS.bot () (* No comparable variants in y, this is only in x -> not in meet *)
+      else SD.fold (fun ss acc -> SS.meet acc ss) yss ss
     in
-    result
-
-  let join = SD.join
-  (* let join = joinNew *)
-
-  let leqOld x y =
-    let left = join_ss x in
-    let right = join_ss y in
-    SS.leq left right
-
-  let leqNew x y =
-    (* Filter out any variants that are in both x and y; those are equal *)
-    let differentVariants = SD.diff x y in
-    (* Check that every x variant is leq compared to y *)
-    let variantIsLeq variant =
-      let fieldsImproved field value =
-        let includingSet = including_variants y field value in
-        M.for_all (fun field value -> Val.leq value (get includingSet field)) variant
-      in
-      M.for_all fieldsImproved variant
+    let rec meet_rec x y =
+      let new_x = SD.fold (fun ss acc -> SD.join acc (SD.singleton (meet_variant ss y))) x (SD.empty ()) in
+      let new_y = SD.fold (fun ss acc -> SD.join acc (SD.singleton (meet_variant ss new_x))) y (SD.empty ()) in
+      if SD.equal new_x x && SD.equal new_y y then new_x else meet_rec new_x new_y
     in
-    SD.for_all variantIsLeq differentVariants
+    meet_rec x y
 
-  let leq = SD.leq
-  (* let leq = leqNew *)
+  let join x y =
+    match find_key_field x with
+    | None -> y
+    | Some key ->
+    let join_variant ss y =
+      let value = SS.get ss key in
+      (* Find all comparable variants in y *)
+      let yss = including_variants y key value in
+      if SD.is_empty yss
+      then ss (* No comparable variants in y, this is only in x -> itself in join *)
+      else SD.fold (fun ss acc -> SS.join acc ss) yss ss
+    in
+    let variant_not_covered x ss =
+      let value = SS.get ss key in
+      let xss = including_variants x key value in
+      SD.is_empty xss (* No variant in x covers this value from y *)
+    in
+    let rec join_rec x y =
+      let new_x_1 = SD.fold (fun ss acc -> SD.join acc (SD.singleton (join_variant ss y))) x (SD.empty ()) in
+      let new_y_1 = SD.fold (fun ss acc -> SD.join acc (SD.singleton (join_variant ss new_x_1))) y (SD.empty ()) in
+      (* Add variants not covered! *)
+      let new_x = SD.fold (fun ss acc -> if variant_not_covered x ss then SD.join acc (SD.singleton ss) else acc) new_y_1 new_x_1 in
+      let new_y = SD.fold (fun ss acc -> if variant_not_covered y ss then SD.join acc (SD.singleton ss) else acc) new_x_1 new_y_1 in
+      (* ignore (Pretty.printf "join_rec - x is: %a\nnew_x is: %a\ny is: %a\nnew_y is: %a\n-------\n" SD.pretty x SD.pretty new_x SD.pretty y SD.pretty new_y); *)
+      if SD.equal new_x x && SD.equal new_y y then new_x else join_rec new_x new_y
+    in
+    join_rec x y
 
+  let leq x y =
+    match find_key_field x with
+    | None -> true
+    | Some key ->
+    let leq_variant ss y =
+      let value = SS.get ss key in
+      (* Find all comparable variants in y *)
+      let yss = including_variants y key value in
+      let joint_yss = join_ss yss in
+      if SD.is_empty yss
+      then false (* No comparable variants in y, this is only in x -> greater than y *)
+      else SS.leq ss joint_yss
+    in
+    SD.for_all (fun ss -> leq_variant ss y) x
+
+  let equal x y = SD.equal x y || (leq x y && leq y x)
   let isSimple x = SD.isSimple x
   let hash x = SD.hash x
-  let widen = SD.widen
-  let narrow = SD.narrow
-  (* let narrow x y = let result = SD.narrow x y in ignore (Pretty.printf "Narrowing - x is: %a\ny is: %a\nResult is: %a\n-------\n" SD.pretty x SD.pretty y SD.pretty result); result *)
+
+  let widen x y =
+    match find_key_field x with
+    | None -> y
+    | Some key ->
+    let widen_variant ss y =
+      let value = SS.get ss key in
+      (* Find all comparable variants in y *)
+      let yss = including_variants y key value in
+      if SD.is_empty yss
+      then ss (* No comparable variants in y, this is only in x -> itself in widen *)
+      else SD.fold (fun ss acc -> SS.widen acc ss) yss ss
+    in
+    let variant_not_covered x ss =
+      let value = SS.get ss key in
+      let xss = including_variants x key value in
+      SD.is_empty xss (* No variant in x covers this value from y *)
+    in
+    let rec widen_rec x y =
+      let new_x_1 = SD.fold (fun ss acc -> SD.widen acc (SD.singleton (widen_variant ss y))) x (SD.empty ()) in
+      let new_y_1 = SD.fold (fun ss acc -> SD.widen acc (SD.singleton (widen_variant ss new_x_1))) y (SD.empty ()) in
+      (* Add variants not covered! *)
+      let new_x = SD.fold (fun ss acc -> if variant_not_covered x ss then SD.widen acc (SD.singleton ss) else acc) new_y_1 new_x_1 in
+      let new_y = SD.fold (fun ss acc -> if variant_not_covered y ss then SD.widen acc (SD.singleton ss) else acc) new_x_1 new_y_1 in
+    if SD.equal new_x x && SD.equal new_y y then new_x else widen_rec new_x new_y
+    in
+    widen_rec x y
+
+  let narrow x y =
+    match find_key_field x with
+    | None -> y
+    | Some key ->
+    let narrow_variant ss y =
+      let value = SS.get ss key in
+      (* Find all comparable variants in y *)
+      let yss = including_variants y key value in
+      if SD.is_empty yss
+      then SS.bot () (* No comparable variants in y, this is only in x -> not in narrow *)
+      else SD.fold (fun ss acc -> SS.narrow acc ss) yss ss
+    in
+    let rec narrow_rec x y =
+      let new_x = SD.fold (fun ss acc -> SD.join acc (SD.singleton (narrow_variant ss y))) x (SD.empty ()) in
+      let new_y = SD.fold (fun ss acc -> SD.join acc (SD.singleton (narrow_variant ss new_x))) y (SD.empty ()) in
+      if SD.equal new_x x && SD.equal new_y y then new_x else narrow_rec new_x new_y
+    in
+    narrow_rec x y
+
   let pretty_diff () (x,y) =
     Pretty.dprintf "{@[%a@] ...}" SD.pretty_diff (x,y)
   let printXml f xs = SD.printXml f xs
-  let widen_with_fct _ = widen
-  let leq_with_fct _ = leq
-  let join_with_fct _ = join
+  let widen_with_fct f x y =
+    match find_key_field x with
+    | None -> y
+    | Some key ->
+    let widen_variant ss y =
+      let value = SS.get ss key in
+      (* Find all comparable variants in y *)
+      let yss = including_variants y key value in
+      if SD.is_empty yss
+      then ss (* No comparable variants in y, this is only in x -> itself in widen *)
+      else SD.fold (fun ss acc -> SS.widen_with_fct f acc ss) yss ss
+    in
+    let variant_not_covered x ss =
+      let value = SS.get ss key in
+      let xss = including_variants x key value in
+      SD.is_empty xss (* No variant in x covers this value from y *)
+    in
+    let rec widen_rec x y =
+      let new_x_1 = SD.fold (fun ss acc -> SD.widen acc (SD.singleton (widen_variant ss y))) x (SD.empty ()) in
+      let new_y_1 = SD.fold (fun ss acc -> SD.widen acc (SD.singleton (widen_variant ss new_x_1))) y (SD.empty ()) in
+      (* Add variants not covered! *)
+      let new_x = SD.fold (fun ss acc -> if variant_not_covered x ss then SD.widen acc (SD.singleton ss) else acc) new_y_1 new_x_1 in
+      let new_y = SD.fold (fun ss acc -> if variant_not_covered y ss then SD.widen acc (SD.singleton ss) else acc) new_x_1 new_y_1 in
+    if SD.equal new_x x && SD.equal new_y y then new_x else widen_rec new_x new_y
+    in
+    widen_rec x y
+
+  let leq_with_fct f x y =
+    match find_key_field x with
+    | None -> true
+    | Some key ->
+    let leq_variant ss y =
+      let value = SS.get ss key in
+      (* Find all comparable variants in y *)
+      let yss = including_variants y key value in
+      let joint_yss = join_ss yss in
+      if SD.is_empty yss
+      then false (* No comparable variants in y, this is only in x -> greater than y *)
+      else SS.leq_with_fct f ss joint_yss
+    in
+    SD.for_all (fun ss -> leq_variant ss y) x
+  let join_with_fct f x y =
+    match find_key_field x with
+    | None -> y
+    | Some key ->
+    let join_variant ss y =
+      let value = SS.get ss key in
+      (* Find all comparable variants in y *)
+      let yss = including_variants y key value in
+      if SD.is_empty yss
+      then ss (* No comparable variants in y, this is only in x -> itself in join *)
+      else SD.fold (fun ss acc -> SS.join_with_fct f acc ss) yss ss
+    in
+    let variant_not_covered x ss =
+      let value = SS.get ss key in
+      let xss = including_variants x key value in
+      SD.is_empty xss (* No variant in x covers this value from y *)
+    in
+    let rec join_rec x y =
+      let new_x_1 = SD.fold (fun ss acc -> SD.join acc (SD.singleton (join_variant ss y))) x (SD.empty ()) in
+      let new_y_1 = SD.fold (fun ss acc -> SD.join acc (SD.singleton (join_variant ss new_x_1))) y (SD.empty ()) in
+      (* Add variants not covered! *)
+      let new_x = SD.fold (fun ss acc -> if variant_not_covered x ss then SD.join acc (SD.singleton ss) else acc) new_y_1 new_x_1 in
+      let new_y = SD.fold (fun ss acc -> if variant_not_covered y ss then SD.join acc (SD.singleton ss) else acc) new_x_1 new_y_1 in
+      (* ignore (Pretty.printf "join_rec - x is: %a\nnew_x is: %a\ny is: %a\nnew_y is: %a\n-------\n" SD.pretty x SD.pretty new_x SD.pretty y SD.pretty new_y); *)
+      if SD.equal new_x x && SD.equal new_y y then new_x else join_rec new_x new_y
+    in
+    join_rec x y
 
   let invariant c x = SD.invariant c x
   (* match c.Invariant.offset with
