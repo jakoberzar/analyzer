@@ -315,29 +315,45 @@ struct
     match find_key_field x with
     | None -> y
     | Some key ->
-    let join_variant ss y =
+    let overlapping_key_variants ss y =
       let value = SS.get ss key in
-      (* Find all comparable variants in y *)
-      let yss = including_variants y key value in
-      if SD.is_empty yss
+      including_variants y key value
+    in
+    let overlapping_variants_join ss overlapping_y =
+      if SD.is_empty overlapping_y
       then ss (* No comparable variants in y, this is only in x -> itself in join *)
-      else SD.fold (fun ss acc -> ss_wise_f acc ss) yss ss
+      else SD.fold (fun ss acc -> ss_wise_f acc ss) overlapping_y ss
+    in
+    let join_variant ss y =
+      let overlapping_y = overlapping_key_variants ss y in
+      overlapping_variants_join ss overlapping_y
     in
     let variant_not_covered x ss =
-      let value = SS.get ss key in
-      let xss = including_variants x key value in
-      SD.is_empty xss (* No variant in x covers this value from y *)
+      SD.is_empty (overlapping_key_variants ss x) (* No variant in x covers this key from y *)
     in
-    let rec join_rec x y =
-      let new_x_1 = SD.fold (fun ss acc -> SD.join acc (SD.singleton (join_variant ss y))) x (SD.empty ()) in
-      let new_y_1 = SD.fold (fun ss acc -> SD.join acc (SD.singleton (join_variant ss new_x_1))) y (SD.empty ()) in
+    let join_x_y x y =
+      (* Join variants that overlap between x and y *)
+      let x_with_overlapped_y = SD.fold (fun ss acc -> SD.join acc (SD.singleton (join_variant ss y))) x (SD.empty ()) in
       (* Add variants not covered! *)
-      let new_x = SD.fold (fun ss acc -> if variant_not_covered x ss then SD.join acc (SD.singleton ss) else acc) new_y_1 new_x_1 in
-      let new_y = SD.fold (fun ss acc -> if variant_not_covered y ss then SD.join acc (SD.singleton ss) else acc) new_x_1 new_y_1 in
-      (* ignore (Pretty.printf "join_rec - x is: %a\nnew_x is: %a\ny is: %a\nnew_y is: %a\n-------\n" SD.pretty x SD.pretty new_x SD.pretty y SD.pretty new_y); *)
-      if SD.equal new_x x && SD.equal new_y y then new_x else join_rec new_x new_y
+      let x_with_y = SD.fold (fun ss acc -> if variant_not_covered x ss then SD.join acc (SD.singleton ss) else acc) y x_with_overlapped_y in
+      let join_comparable_key_variants x =
+        let rec f unique remaining =
+          if SD.is_empty remaining
+          then unique
+          else
+            let head = List.hd (SD.elements remaining) in
+            let tail = SD.remove head remaining in
+            let overlapping_tail = overlapping_key_variants head tail in
+            let new_head = overlapping_variants_join head overlapping_tail in
+            let new_unique = SD.add new_head unique in
+            let new_remaining = SD.diff tail overlapping_tail in
+            f new_unique new_remaining
+        in f (SD.empty ()) x
+      in
+      let new_x = join_comparable_key_variants x_with_y in
+      new_x
     in
-    join_rec x y
+    join_x_y x y
 
   let meet x y = meet_narrow_common SS.meet x y
 
