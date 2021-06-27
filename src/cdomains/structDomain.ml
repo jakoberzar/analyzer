@@ -296,20 +296,24 @@ struct
     match find_key_field x with
     | None -> y
     | Some key ->
-    let meet_variant ss y =
+    let comparble_variants ss y =
       let value = SS.get ss key in
-      (* Find all comparable variants in y *)
-      let yss = including_variants y key value in
-      if SD.is_empty yss
-      then SS.bot () (* No comparable variants in y, this is only in x -> not in meet *)
-      else SD.fold (fun ss acc -> ss_wise_f acc ss) yss ss
+      including_variants y key value
     in
-    let rec meet_rec x y =
-      let new_x = SD.fold (fun ss acc -> SD.join acc (SD.singleton (meet_variant ss y))) x (SD.empty ()) in
-      let new_y = SD.fold (fun ss acc -> SD.join acc (SD.singleton (meet_variant ss new_x))) y (SD.empty ()) in
-      if SD.equal new_x x && SD.equal new_y y then new_x else meet_rec new_x new_y
+    let meet_variant ss y =
+      let variants = comparble_variants ss y in
+      if SD.is_empty variants
+      then None (* No comparable variants in y, this is only in x -> not in meet *)
+      else Some (SD.fold (fun ss acc -> ss_wise_f acc ss) variants ss)
     in
-    meet_rec x y
+    let met_variants = SD.filter (fun ss -> not (SD.is_empty (comparble_variants ss y))) x in
+    if SD.cardinal met_variants = 0 (* No common variants between the elements! *)
+    then bot ()
+    else SD.fold (fun ss acc ->
+      match meet_variant ss y with
+        | None -> acc (* This variant (with this key) is only in x, not in meet *)
+        | Some result -> SD.join acc (SD.singleton result)
+    ) met_variants (SD.empty ())
 
   let join_widen_common ss_wise_f x y =
     match find_key_field x with
