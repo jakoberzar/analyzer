@@ -118,6 +118,18 @@ struct
     | TNamed ({ttype=t; _}, _) -> bot_value t
     | _ -> `Bot
 
+  let is_bot_value x =
+    match x with
+    | `Int x -> ID.is_bot x
+    | `Address x -> AD.is_bot x
+    | `Struct x -> Structs.is_bot x
+    | `Union x -> Unions.is_bot x
+    | `Array x -> CArrays.is_bot x
+    | `List x -> Lists.is_bot x
+    | `Blob x -> Blobs.is_bot x
+    | `Bot -> true
+    | _ -> false
+
   let rec init_value (t: typ): t = (* top_value is not used here because structs, blob etc will not contain the right members *)
     let init_comp compinfo: Structs.t =
       let nstruct = Structs.top () in

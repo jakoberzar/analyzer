@@ -242,18 +242,30 @@ struct
     in
     result_key
 
+  let non_empty_meet v1 v2 =
+    let m = Val.meet v1 v2 in
+    not (Val.is_bot_value m)
+
 
   (* Check if a given ss variant is comparable with given value in given field *)
   let variant_comparable field value ss =
     let current = SS.get ss field in
-    Val.leq value current || Val.leq current value
+    non_empty_meet current value
 
   (* Get a set of all variants that include this field value  *)
   let including_variants s field value =
     SD.filter (variant_comparable field value) s
 
   let replace_if_lower s field value =
+    (* TODO - Change to replace with meet! Works better with intervals! *)
     let result_replace = SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) s in
+    (* Normalization not needed;
+    - variants in s are only those that have key values > or < than the new value
+    - if they are >, there is only one variant that overlaps it -> we only narrow it down
+    - if they are <, the new value is not lower -> it won't be replaced anyways
+    - if they are boundaries; values are [1,2], [3,4] while the new value is [2,3]
+      - currently, new values are not lower -> won't be replaced
+      - should be replaced with meet -> [2,2], [3,3] -> still stay disjunctive *)
     result_replace
 
   let refine s field value =
