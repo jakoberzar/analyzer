@@ -296,17 +296,17 @@ struct
     match find_key_field x with
     | None -> y
     | Some key ->
-    let comparble_variants ss y =
+    let comparable_variants ss y =
       let value = SS.get ss key in
       including_variants y key value
     in
     let meet_variant ss y =
-      let variants = comparble_variants ss y in
+      let variants = comparable_variants ss y in
       if SD.is_empty variants
       then None (* No comparable variants in y, this is only in x -> not in meet *)
       else Some (SD.fold (fun ss acc -> ss_wise_f acc ss) variants ss)
     in
-    let met_variants = SD.filter (fun ss -> not (SD.is_empty (comparble_variants ss y))) x in
+    let met_variants = SD.filter (fun ss -> not (SD.is_empty (comparable_variants ss y))) x in
     if SD.cardinal met_variants = 0 (* No common variants between the elements! *)
     then bot ()
     else SD.fold (fun ss acc ->
