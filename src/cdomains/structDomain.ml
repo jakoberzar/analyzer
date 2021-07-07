@@ -18,6 +18,12 @@ sig
   val leq_with_fct: (value -> value -> bool) -> t -> t -> bool
 end
 
+module type LatticeWithBotValue =
+sig
+  include Lattice.S
+  val is_bot_value: t -> bool
+end
+
 module Simple (Val: Lattice.S) =
 struct
   include Printable.Std
@@ -96,7 +102,7 @@ struct
       Invariant.none
 end
 
-module SimpleSets (Val: Lattice.S) =
+module SimpleSets (Val: LatticeWithBotValue) =
 struct
   include Printable.Std
   module M = MapDomain.MapTop (Basetype.CilField) (Val)
@@ -120,19 +126,24 @@ struct
   let replace s field value =
     SD.map (fun s -> SS.replace s field value) s
 
-  let replace_if_lower s field value =
-    SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) s
+  let get_value_meet ss field value =
+    let current = SS.get ss field in
+    Val.meet value current
+
+  let replace_with_meet s field value =
+    SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s
 
   (* Get a set of all variants that include this field value  *)
   let including_variants s field value =
     let variant_comparable ss =
-      let current = SS.get ss field in
-      Val.leq value current || Val.leq current value in
+      let value_meet = get_value_meet ss field value in
+      not (Val.is_bot_value value_meet)
+    in
     SD.filter variant_comparable s
 
   let refine s field value =
     let including_set = including_variants s field value in
-    replace_if_lower including_set field value
+    replace_with_meet including_set field value
 
   let get s field =
     if SD.is_empty s
@@ -185,7 +196,7 @@ struct
   let invariant c x = SD.invariant c x
 end
 
-module BetterSets (Val: Lattice.S) =
+module BetterSets (Val: LatticeWithBotValue) =
 struct
   include Printable.Std
   module M = MapDomain.MapTop (Basetype.CilField) (Val)
@@ -240,37 +251,46 @@ struct
           then joint_variants result_replace (* Key is now the same in all variants *)
           else result_replace
     in
+    if Messages.tracing then Messages.tracel "bot-bug" "Replace with s:\n%a\nfield:\n%a\nvalue:\n%a\nresult:\n%a\n---------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty result_key;
     result_key
 
-  let non_empty_meet v1 v2 =
-    let m = Val.meet v1 v2 in
-    not (Val.is_bot_value m)
-
+  let get_value_meet ss field value =
+    let current = SS.get ss field in
+    Val.meet value current
 
   (* Check if a given ss variant is comparable with given value in given field *)
   let variant_comparable field value ss =
-    let current = SS.get ss field in
-    non_empty_meet current value
+    let value_meet = get_value_meet ss field value in
+    not (Val.is_bot_value value_meet)
 
   (* Get a set of all variants that include this field value  *)
   let including_variants s field value =
     SD.filter (variant_comparable field value) s
 
-  let replace_if_lower s field value =
-    (* TODO - Change to replace with meet! Works better with intervals! *)
-    let result_replace = SD.map (fun s -> if Val.leq value (SS.get s field) then SS.replace s field value else s) s in
+  let replace_with_meet s field value =
+    let result_replace = SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s in
     (* Normalization not needed;
     - variants in s are only those that have key values > or < than the new value
     - if they are >, there is only one variant that overlaps it -> we only narrow it down
     - if they are <, the new value is not lower -> it won't be replaced anyways
     - if they are boundaries; values are [1,2], [3,4] while the new value is [2,3]
-      - currently, new values are not lower -> won't be replaced
       - should be replaced with meet -> [2,2], [3,3] -> still stay disjunctive *)
     result_replace
 
   let refine s field value =
     let including_set = including_variants s field value in
-    replace_if_lower including_set field value
+    let result = replace_with_meet including_set field value in
+    if Messages.tracing then Messages.tracel "bot-bug" "Refine with s:\n%a\nfield:\n%a\nvalue:\n%a\nresult:\n%a\n---------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty result;
+    result
+
+  (* Check if a variant is above / below from this one in a given field *)
+  let variant_above_below ss field value =
+    let current = SS.get ss field in
+    Val.leq current value || Val.leq value current
+
+  (* Get a set of all variants that are above / below this one  *)
+  let variants_above_below s field value =
+    SD.filter (fun ss -> variant_above_below ss field value) s
 
   let get s field =
     if SD.is_empty s
@@ -282,7 +302,7 @@ struct
   let map f s = SD.singleton (on_joint_ss (SS.map f) s)
 
   (* Add these or the byte code will segfault ... *)
-  (* let equal x y = SD.equal x y *)
+  let equal x y = SD.equal x y
   let compare x y = SD.compare x y
   let is_top x = SD.for_all (SS.is_top) x
   let top () = SD.singleton (SS.top ())
@@ -320,11 +340,19 @@ struct
     in
     let met_variants = SD.filter (fun ss -> not (SD.is_empty (comparable_variants ss y))) x in
     if SD.cardinal met_variants = 0 (* No common variants between the elements! *)
-    then bot ()
+    then
+      (
+        if Messages.tracing then Messages.tracel "bot-bug" "Bot with x:\n%a\ny:\n%a\n---------\n" SD.pretty x SD.pretty y;
+        bot ()
+        (* let result = bot () in
+        ignore (Pretty.printf "Bot with x:\n%a\ny:\n%a\nresult:\n%a\n---------\n" SD.pretty x SD.pretty y SD.pretty result);
+        result *)
+      )
+
     else SD.fold (fun ss acc ->
       match meet_variant ss y with
         | None -> acc (* This variant (with this key) is only in x, not in meet *)
-        | Some result -> SD.join acc (SD.singleton result)
+        | Some result -> SD.add result acc
     ) met_variants (SD.empty ())
 
   let join_widen_common ss_wise_f x y =
@@ -349,9 +377,9 @@ struct
     in
     let join_x_y x y =
       (* Join variants that overlap between x and y *)
-      let x_with_overlapped_y = SD.fold (fun ss acc -> SD.join acc (SD.singleton (join_variant ss y))) x (SD.empty ()) in
+      let x_with_overlapped_y = SD.fold (fun ss acc -> SD.add (join_variant ss y) acc) x (SD.empty ()) in
       (* Add variants not covered! *)
-      let x_with_y = SD.fold (fun ss acc -> if variant_not_covered x ss then SD.join acc (SD.singleton ss) else acc) y x_with_overlapped_y in
+      let x_with_y = SD.fold (fun ss acc -> if variant_not_covered x ss then SD.add ss acc else acc) y x_with_overlapped_y in
       let join_comparable_key_variants x =
         let rec f unique remaining =
           if SD.is_empty remaining
@@ -371,19 +399,31 @@ struct
     in
     join_x_y x y
 
-  let meet x y = meet_narrow_common SS.meet x y
+  let meet x y =
+    let result = meet_narrow_common SS.meet x y in
+    if Messages.tracing then Messages.tracel "bot-bug" "Meet with x:\n%a\ny:\n%a\nresult:\n%a\n---------\n" SD.pretty x SD.pretty y SD.pretty result;
+    result
 
-  let join x y = join_widen_common SS.join x y
+  let join x y = (*join_widen_common SS.join x y *)
+    let result = join_widen_common SS.join x y in
+    (* if Messages.tracing then Messages.tracel "bot-bug" "Join with x:\n%a\ny:\n%a\nresult:\n%a\n---------\n" SD.pretty x SD.pretty y SD.pretty result; *)
+    result
 
-  let leq x y = leq_common SS.leq x y
+  let leq x y = (*leq_common SS.leq x y *)
+    let result = leq_common SS.leq x y in
+    if Messages.tracing then Messages.tracel "bot-bug" "Leq with x:\n%a\ny:\n%a\nresult:\n%b\n---------\n" SD.pretty x SD.pretty y result;
+    result
 
-  let equal x y = SD.equal x y || (leq x y && leq y x)
+  (* let equal x y = SD.equal x y || (leq x y && leq y x) *)
   let isSimple x = SD.isSimple x
   let hash x = SD.hash x
 
   let widen x y = join_widen_common SS.widen x y
 
-  let narrow x y = meet_narrow_common SS.narrow x y
+  let narrow x y = (*meet_narrow_common SS.narrow x y*)
+    let result = meet_narrow_common SS.narrow x y in
+    if Messages.tracing then Messages.tracel "bot-bug" "Narrow with x:\n%a\ny:\n%a\nresult:\n%a\n---------\n" SD.pretty x SD.pretty y SD.pretty result;
+    result
 
 
   let pretty_diff () (x,y) =

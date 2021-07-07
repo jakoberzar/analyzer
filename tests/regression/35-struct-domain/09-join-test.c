@@ -10,7 +10,6 @@ struct FunctionInfo {
 
 struct FunctionInfo functionToRun;
 
-
 int f1();
 int f2();
 int f3();
@@ -25,17 +24,15 @@ int example1() {
 
     if (b == 0) {
         if (a == 1) {
-            for (int i = 0; i < 3; i++) {
-                functionToRun.id = i; // [0,2]
-                functionToRun.ptr = f1;
-            }
+            functionToRun.id = 2; // [2,2]
+            functionToRun.ptr = f1;
         } else if (a == 2) {
             for (int i = 3; i < 5; i++) {
                 functionToRun.id = i; // [3,4]
                 functionToRun.ptr = f2;
             }
         } else if (a == 3) {
-            functionToRun.id = 15;
+            functionToRun.id = 15; // [15,15]
             functionToRun.ptr = f3;
         } else {
             for (int i = 6; i < 8; i++) {
@@ -69,7 +66,7 @@ int example1() {
         assert(functionToRun.ptr != f3);
         assert(functionToRun.ptr == f1 || functionToRun.ptr == f5); // TODO
     } else if (functionToRun.id > 3 && functionToRun.id < 5) {
-        assert(functionToRun.ptr == f2 || functionToRun.ptr == f5 || functionToRun.ptr == f6); // TODO
+        assert(functionToRun.ptr == f2 || functionToRun.ptr == f6); // TODO
     }
 
     return 0;

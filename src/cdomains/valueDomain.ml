@@ -29,6 +29,7 @@ sig
   val smart_leq: (exp -> int64 option) -> (exp -> int64 option) -> t -> t -> bool
   val is_immediate_type: typ -> bool
   val bot_value: typ -> t
+  val is_bot_value: t -> bool
   val init_value: typ -> t
   val top_value: typ -> t
   val zero_init_value: typ -> t

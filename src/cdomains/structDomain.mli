@@ -24,10 +24,16 @@ sig
   val leq_with_fct: (value -> value -> bool) -> t -> t -> bool
 end
 
+module type LatticeWithBotValue =
+sig
+  include Lattice.S
+  val is_bot_value: t -> bool
+end
+
 module Simple (Val: Lattice.S): S with type value = Val.t and type field = fieldinfo
 (** Creates a simple structure domain by mapping fieldnames to their values
   * using the {!MapDomain.InfMap} functor *)
 
-module SimpleSets (Val: Lattice.S): S with type value = Val.t and type field = fieldinfo
+module SimpleSets (Val: LatticeWithBotValue): S with type value = Val.t and type field = fieldinfo
 
-module BetterSets (Val: Lattice.S): S with type value = Val.t and type field = fieldinfo
+module BetterSets (Val: LatticeWithBotValue): S with type value = Val.t and type field = fieldinfo
