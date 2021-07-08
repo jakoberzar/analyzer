@@ -108,6 +108,8 @@ struct
   module M = MapDomain.MapTop (Basetype.CilField) (Val)
   module SS = Simple (Val)
   module SD = SetDomain.ToppedSet (SS) (struct let topname = "All Possible Component Values" end)
+  module Set = SetDomain.Make (SS)
+
   let name () = "simple set structs"
   type t = SD.t [@@deriving to_yojson]
   type field = fieldinfo
@@ -123,15 +125,28 @@ struct
   let pretty_f sf = SD.pretty_f sf
   let pretty () x = SD.pretty_f short () x
 
-  let replace s field value =
-    SD.map (fun s -> SS.replace s field value) s
+  let replace (s:t) field value =
+    (*
+    match s with
+      | All -> SD.singleton (SS.replace (SS.top ()) field value)
+      | Set x -> SD.map (fun s -> SS.replace s field value) s
+    *)
+    (*
+    let top_variant = SD.singleton (SS.replace (SS.top ()) field value) in
+    SD.schema_default top_variant (`Set (Set.map (fun ss -> SS.replace ss field value))) s
+    *)
+    if SD.is_top s
+    then SD.singleton (SS.replace (SS.top ()) field value)
+    else SD.map (fun s -> SS.replace s field value) s
 
   let get_value_meet ss field value =
     let current = SS.get ss field in
     Val.meet value current
 
   let replace_with_meet s field value =
-    SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s
+    if SD.is_top s
+    then SD.singleton (SS.replace (SS.top ()) field value)
+    else SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s
 
   (* Get a set of all variants that overlap with this field value *)
   let overlapping_set s field value =
@@ -139,21 +154,24 @@ struct
       let value_meet = get_value_meet ss field value in
       not (Val.is_bot_value value_meet)
     in
-    SD.filter variant_overlaps s
+    if SD.is_top s
+    then s
+    else SD.filter variant_overlaps s
 
   let refine s field value =
     let overlap = overlapping_set s field value in
     replace_with_meet overlap field value
 
   let get s field =
-    if SD.is_empty s
+    if SD.is_top s
     then Val.top ()
     else SD.fold (fun ss acc -> Val.join acc (SS.get ss field)) s (Val.bot ())
 
   let join_ss s =
-    let elements = SD.elements s in
-    match elements with
-      | [] -> SS.top ()
+    if SD.is_top s
+    then SS.top ()
+    else match SD.elements s with
+      | [] -> SS.bot ()
       | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
 
   let on_joint_ss f s = f (join_ss s)
@@ -168,10 +186,10 @@ struct
   (* Add these or the byte code will segfault ... *)
   let equal x y = SD.equal x y
   let compare x y = SD.compare x y
-  let is_top x = SD.for_all (SS.is_top) x
-  let top () = SD.singleton (SS.top ())
-  let is_bot x = SD.for_all (SS.is_bot) x
-  let bot () = SD.singleton (SS.bot ())
+  let is_top x = SD.is_top x
+  let top () = SD.top ()
+  let is_bot x = SD.is_bot x
+  let bot () = SD.bot ()
   let meet x y = SD.meet x y
   let join = SD.join
   let leq = SD.leq
