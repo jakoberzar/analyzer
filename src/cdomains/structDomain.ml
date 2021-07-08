@@ -133,17 +133,17 @@ struct
   let replace_with_meet s field value =
     SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s
 
-  (* Get a set of all variants that include this field value  *)
-  let including_variants s field value =
-    let variant_comparable ss =
+  (* Get a set of all variants that overlap with this field value *)
+  let overlapping_set s field value =
+    let variant_overlaps ss =
       let value_meet = get_value_meet ss field value in
       not (Val.is_bot_value value_meet)
     in
-    SD.filter variant_comparable s
+    SD.filter variant_overlaps s
 
   let refine s field value =
-    let including_set = including_variants s field value in
-    replace_with_meet including_set field value
+    let overlap = overlapping_set s field value in
+    replace_with_meet overlap field value
 
   let get s field =
     if SD.is_empty s
@@ -154,7 +154,6 @@ struct
     let elements = SD.elements s in
     match elements with
       | [] -> SS.top ()
-      | [x] -> x
       | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
 
   let on_joint_ss f s = f (join_ss s)

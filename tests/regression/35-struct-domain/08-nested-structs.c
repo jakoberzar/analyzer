@@ -76,21 +76,20 @@ int example1() {
     }
 
     typedef int (*fun)(int);
-    if (task.f.id == 1) {
-        fun f = task.f.ptr;
-        assert(f == factorial);
-        if (task.taskId == 0) {
-            assert(task.arg == 3);
-        } else if (task.taskId == 1) {
-            assert(task.arg == 5);
-        } else if (task.taskId == 2) {
-            assert(task.arg == 10);
-        }
-        int result = f(task.arg);
-        printf("Factorial of %d is %d\n", task.arg, result);
-    }
+    // if (task.f.id == 1) {
+    //     fun f = task.f.ptr;
+    //     assert(f == factorial);
+    //     if (task.taskId == 0) {
+    //         assert(task.arg == 3);
+    //     } else if (task.taskId == 1) {
+    //         assert(task.arg == 5);
+    //     } else if (task.taskId == 2) {
+    //         assert(task.arg == 10);
+    //     }
+    //     int result = f(task.arg);
+    //     printf("Factorial of %d is %d\n", task.arg, result);
+    // }
 
-    /*
     if (task.f.id == 1) {
         fun f = task.f.ptr;
         assert(f == factorial);
@@ -120,7 +119,6 @@ int example1() {
         printf("Exiting with code %d...\n", task.arg);
         int result = f(task.arg);
     }
-    */
 
     return 0;
 }
