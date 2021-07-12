@@ -235,18 +235,20 @@ struct
   let pretty () x = SD.pretty_f short () x
 
   let join_ss s =
-    let elements = SD.elements s in
-    match elements with
-      | [] -> SS.top ()
-      | [x] -> x
+    if SD.is_top s
+    then SS.top ()
+    else match SD.elements s with
+      | [] -> SS.bot ()
       | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
 
-  let on_joint_ss f s = f (join_ss s)
+  let on_joint_ss f default s =
+    if SD.is_bot s then default else f (join_ss s)
 
-  let joint_variants s = SD.singleton (join_ss s)
+  let join_set s =
+    if SD.is_bot s then s else SD.singleton (join_ss s)
 
-  let cardinal = on_joint_ss (SS.cardinal)
-  let keys = on_joint_ss (SS.keys)
+  let cardinal = on_joint_ss (SS.cardinal) 0
+  let keys = on_joint_ss (SS.keys) []
 
   let find_key_field s =
     let existing_keys = keys s in
@@ -259,13 +261,17 @@ struct
       Some first_key
 
   let replace s field value =
-    let result_replace = SD.map (fun s -> SS.replace s field value) s in
+    let result_replace =
+      if SD.is_top s
+      then SD.singleton (SS.replace (SS.top ()) field value)
+      else SD.map (fun s -> SS.replace s field value) s
+    in
     let result_key =
       match find_key_field s with
         | None -> result_replace
         | Some key ->
           if Basetype.CilField.equal key field
-          then joint_variants result_replace (* Key is now the same in all variants *)
+          then join_set result_replace (* Key is now the same in all variants *)
           else result_replace
     in
     if Messages.tracing then Messages.tracel "bot-bug" "Replace with s:\n%a\nfield:\n%a\nvalue:\n%a\nresult:\n%a\n---------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty result_key;
@@ -277,15 +283,24 @@ struct
 
   (* Check if a given ss variant is comparable with given value in given field *)
   let variant_comparable field value ss =
-    let value_meet = get_value_meet ss field value in
-    not (Val.is_bot_value value_meet)
+    let current = SS.get ss field in
+    (* Val.is_bot_value value || Val.is_bot_value current || *)
+    Val.leq current value || Val.leq value current ||
+      let value_meet = Val.meet value current in
+      not (Val.is_bot_value value_meet)
 
   (* Get a set of all variants that include this field value  *)
   let including_variants s field value =
-    SD.filter (variant_comparable field value) s
+    if SD.is_top s
+    then s
+    else SD.filter (variant_comparable field value) s
 
   let replace_with_meet s field value =
-    let result_replace = SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s in
+    let result_replace =
+      if SD.is_top s
+      then SD.singleton (SS.replace (SS.top ()) field value)
+      else SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s
+    in
     (* Normalization not needed;
     - variants in s are only those that have key values > or < than the new value
     - if they are >, there is only one variant that overlaps it -> we only narrow it down
@@ -307,26 +322,35 @@ struct
 
   (* Get a set of all variants that are above / below this one  *)
   let variants_above_below s field value =
-    SD.filter (fun ss -> variant_above_below ss field value) s
+    if SD.is_top s
+    then s
+    else SD.filter (fun ss -> variant_above_below ss field value) s
 
   let get s field =
-    if SD.is_empty s
+    if SD.is_top s
     then Val.top ()
     else SD.fold (fun ss acc -> Val.join acc (SS.get ss field)) s (Val.bot ())
 
-  let fold f = on_joint_ss (SS.fold f)
+  let fold f s a = on_joint_ss (fun ss -> SS.fold f ss a) a s
 
-  let map f s = SD.singleton (on_joint_ss (SS.map f) s)
+  let map f s =
+    if SD.is_bot s || SD.is_top s
+    then s
+    else SD.singleton (on_joint_ss (SS.map f) (SS.top ()) s)
 
   (* Add these or the byte code will segfault ... *)
   let equal x y = SD.equal x y
   let compare x y = SD.compare x y
-  let is_top x = SD.for_all (SS.is_top) x
-  let top () = SD.singleton (SS.top ())
-  let is_bot x = SD.for_all (SS.is_bot) x
-  let bot () = SD.singleton (SS.bot ())
+  let is_top x = SD.is_top x
+  let top () = SD.top ()
+  let is_bot x = SD.is_bot x
+  let bot () = SD.bot ()
 
+  (* TODO - Assert that the keys of both x and y are the same in below methods *)
   let leq_common ss_wise_f x y =
+    if SD.is_top y then true else
+    if SD.is_bot x then true else
+    if SD.equal x y then true else
     match find_key_field x with
     | None -> true
     | Some key ->
@@ -334,14 +358,17 @@ struct
       let value = SS.get ss key in
       (* Find all comparable variants in y *)
       let yss = including_variants y key value in
-      let joint_yss = join_ss yss in
+      (* if Messages.tracing then Messages.tracel "bot-bug" "LeqVariant with x:\n%a\ny:\n%a\nvalue:%a\nyss:\n%a\n---------\n" SD.pretty x SD.pretty y Val.pretty value SD.pretty yss; *)
       if SD.is_empty yss
       then false (* No comparable variants in y, this is only in x -> greater than y *)
-      else ss_wise_f ss joint_yss
+      else ss_wise_f ss (join_ss yss)
     in
     SD.for_all (fun ss -> leq_variant ss y) x
 
   let meet_narrow_common ss_wise_f x y =
+    if SD.is_top x then y else if SD.is_top y then x else
+    if SD.is_bot x then x else if SD.is_bot y then y else
+    if SD.equal x y then x else
     match find_key_field x with
     | None -> y
     | Some key ->
@@ -360,10 +387,7 @@ struct
     then
       (
         if Messages.tracing then Messages.tracel "bot-bug" "Bot with x:\n%a\ny:\n%a\n---------\n" SD.pretty x SD.pretty y;
-        bot ()
-        (* let result = bot () in
-        ignore (Pretty.printf "Bot with x:\n%a\ny:\n%a\nresult:\n%a\n---------\n" SD.pretty x SD.pretty y SD.pretty result);
-        result *)
+        SD.bot ()
       )
 
     else SD.fold (fun ss acc ->
@@ -373,10 +397,14 @@ struct
     ) met_variants (SD.empty ())
 
   let join_widen_common ss_wise_f x y =
+    if SD.is_top x then x else if SD.is_top y then y else
+    if SD.is_bot x then y else if SD.is_bot x then y else
+    if SD.equal x y then x else
     match find_key_field x with
     | None -> y
     | Some key ->
     let overlapping_key_variants ss y =
+      if SD.is_bot y then y else
       let value = SS.get ss key in
       including_variants y key value
     in
@@ -423,7 +451,7 @@ struct
 
   let join x y = (*join_widen_common SS.join x y *)
     let result = join_widen_common SS.join x y in
-    (* if Messages.tracing then Messages.tracel "bot-bug" "Join with x:\n%a\ny:\n%a\nresult:\n%a\n---------\n" SD.pretty x SD.pretty y SD.pretty result; *)
+    if Messages.tracing then Messages.tracel "bot-bug" "Join with x:\n%a\ny:\n%a\nresult:\n%a\n---------\n" SD.pretty x SD.pretty y SD.pretty result;
     result
 
   let leq x y = (*leq_common SS.leq x y *)
@@ -431,7 +459,7 @@ struct
     if Messages.tracing then Messages.tracel "bot-bug" "Leq with x:\n%a\ny:\n%a\nresult:\n%b\n---------\n" SD.pretty x SD.pretty y result;
     result
 
-  (* let equal x y = SD.equal x y || (leq x y && leq y x) *)
+  let equal x y = SD.equal x y
   let isSimple x = SD.isSimple x
   let hash x = SD.hash x
 
