@@ -164,7 +164,7 @@ struct
 
   let get s field =
     if SD.is_top s
-    then Val.top ()
+    then Val.top_value (field.ftype)
     else SD.fold (fun ss acc -> Val.join acc (SS.get ss field)) s (Val.bot ())
 
   let join_ss s =
@@ -328,7 +328,7 @@ struct
 
   let get s field =
     if SD.is_top s
-    then Val.top ()
+    then Val.top_value (field.ftype)
     else SD.fold (fun ss acc -> Val.join acc (SS.get ss field)) s (Val.bot ())
 
   let fold f s a = on_joint_ss (fun ss -> SS.fold f ss a) a s
