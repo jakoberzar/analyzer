@@ -126,19 +126,40 @@ struct
   let pretty_f sf = SD.pretty_f sf
   let pretty () x = SD.pretty_f short () x
 
-  let replace (s:t) field value =
-    (*
-    match s with
-      | All -> SD.singleton (SS.replace (SS.top ()) field value)
-      | Set x -> SD.map (fun s -> SS.replace s field value) s
-    *)
-    (*
-    let top_variant = SD.singleton (SS.replace (SS.top ()) field value) in
-    SD.schema_default top_variant (`Set (Set.map (fun ss -> SS.replace ss field value))) s
-    *)
-    if SD.is_top s
-    then SD.singleton (SS.replace (SS.top ()) field value)
-    else SD.map (fun s -> SS.replace s field value) s
+  (* let every_field_top ss =
+    SS.fold (fun field value acc -> acc && (Val.equal (Val.top_value field.ftype) value)) ss true *)
+
+  let create_all_fields_top compinfo =
+    let nstruct = SS.top () in
+    let top_field nstruct fd = SS.replace nstruct fd (Val.top_value fd.ftype) in
+    List.fold_left top_field nstruct compinfo.cfields
+
+  (* If any of the variants is all top, it automatically ruins the other variants,
+     so we can just shorten it to top *)
+  let normalize_top s =
+    if SD.is_top s || SD.is_empty s then s else
+    let sample_ss = List.hd (SD.elements s) in
+    match SS.keys sample_ss with
+    | [] -> s
+    | field::_ ->
+      let every_field_top_ss = create_all_fields_top field.fcomp in
+      if SD.exists (fun ss -> SS.equal every_field_top_ss ss) s
+      then (
+        if Messages.tracing then Messages.tracel "normalize-top" "Normalize top - s:\n%a\n---------\n" SD.pretty s;
+        SD.top ()
+      )
+      else s
+
+  let replace s field value =
+    if Messages.tracing then Messages.tracel "normalize-top" "Normalize top Replace - s:\n%a\nfield:%a\nvalue: %a\n---------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value ;
+    let replaced =
+      if SD.is_top s
+      then SD.singleton (SS.replace (create_all_fields_top field.fcomp) field value)
+      else SD.map (fun s -> SS.replace s field value) s
+    in
+    if Val.equal (Val.top_value (field.ftype)) value
+    then normalize_top replaced
+    else replaced
 
   let get_value_meet ss field value =
     let current = SS.get ss field in
@@ -146,8 +167,9 @@ struct
 
   let replace_with_meet s field value =
     if SD.is_top s
-    then SD.singleton (SS.replace (SS.top ()) field value)
+    then SD.singleton (SS.replace (create_all_fields_top field.fcomp) field value)
     else SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s
+    (* Does not need to normalize top, since refine can only improve values and no top variant exists before! *)
 
   (* Get a set of all variants that overlap with this field value *)
   let overlapping_set s field value =
@@ -179,7 +201,7 @@ struct
 
   let fold f = on_joint_ss (SS.fold f)
 
-  let map f s = SD.singleton (on_joint_ss (SS.map f) s)
+  let map f s = normalize_top (SD.singleton (on_joint_ss (SS.map f) s))
 
   let cardinal = on_joint_ss (SS.cardinal)
   let keys = on_joint_ss (SS.keys)
