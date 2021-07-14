@@ -28,6 +28,7 @@ module type LatticeWithBotValue =
 sig
   include Lattice.S
   val is_bot_value: t -> bool
+  val top_value: typ -> t
 end
 
 module Simple (Val: Lattice.S): S with type value = Val.t and type field = fieldinfo
