@@ -66,6 +66,10 @@ int example1() {
         assert(functionToRun.ptr != f3);
         assert(functionToRun.ptr == f1 || functionToRun.ptr == f5); // TODO
     } else if (functionToRun.id > 3 && functionToRun.id < 5) {
+        assert(functionToRun.ptr == f1 || functionToRun.ptr == f5 ||
+            functionToRun.ptr == f2 || functionToRun.ptr == f6 ||
+            functionToRun.ptr == f4 || functionToRun.ptr == f7);
+        assert(functionToRun.ptr != f3);
         assert(functionToRun.ptr == f2 || functionToRun.ptr == f6); // TODO
     }
 

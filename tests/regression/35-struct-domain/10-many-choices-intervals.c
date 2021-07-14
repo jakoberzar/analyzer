@@ -1,4 +1,4 @@
-// PARAM: --enable ana.int.interval
+// PARAM: --enable ana.int.interval --enable exp.no-interval-context
 
 #include "assert.h"
 #include "stdio.h"
