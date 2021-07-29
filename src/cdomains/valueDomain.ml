@@ -32,6 +32,7 @@ sig
   val is_bot_value: t -> bool
   val init_value: typ -> t
   val top_value: typ -> t
+  val is_top_value: t -> typ -> bool
   val zero_init_value: typ -> t
 end
 
@@ -170,6 +171,17 @@ struct
     | TNamed ({ttype=t; _}, _) -> top_value t
     | _ -> `Top
 
+  let is_top_value x (t: typ) =
+    match x with
+    | `Int x -> ID.is_top_of (Cilfacade.get_ikind (t)) x
+    | `Address x -> AD.is_top x
+    | `Struct x -> Structs.is_top x
+    | `Union x -> Unions.is_top x
+    | `Array x -> CArrays.is_top x
+    | `List x -> Lists.is_top x
+    | `Blob x -> Blobs.is_top x
+    | `Bot -> false
+    | `Top -> true
 
     let rec zero_init_value (t:typ): t =
       let zero_init_comp compinfo: Structs.t =

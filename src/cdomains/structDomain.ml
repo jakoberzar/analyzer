@@ -23,6 +23,7 @@ sig
   include Lattice.S
   val is_bot_value: t -> bool
   val top_value: typ -> t
+  val is_top_value: t -> typ -> bool
 end
 
 module Simple (Val: Lattice.S) =
@@ -126,8 +127,9 @@ struct
   let pretty_f sf = SD.pretty_f sf
   let pretty () x = SD.pretty_f short () x
 
-  (* let every_field_top ss =
-    SS.fold (fun field value acc -> acc && (Val.equal (Val.top_value field.ftype) value)) ss true *)
+  let every_field_top ss =
+    (* SS.fold (fun field value acc -> acc && (Val.equal (Val.top_value field.ftype) value)) ss true *)
+    SS.fold (fun field value acc -> acc && Val.is_top_value value field.ftype) ss true
 
   let create_all_fields_top compinfo =
     let nstruct = SS.top () in
@@ -142,8 +144,8 @@ struct
     match SS.keys sample_ss with
     | [] -> s
     | field::_ ->
-      let every_field_top_ss = create_all_fields_top field.fcomp in
-      if SD.exists (fun ss -> SS.equal every_field_top_ss ss) s
+      (* let every_field_top_ss = create_all_fields_top field.fcomp in *)
+      if SD.exists (fun ss -> every_field_top ss) s
       then (
         if Messages.tracing then Messages.tracel "normalize-top" "Normalize top - s:\n%a\n---------\n" SD.pretty s;
         SD.top ()
@@ -157,7 +159,7 @@ struct
       then SD.singleton (SS.replace (create_all_fields_top field.fcomp) field value)
       else SD.map (fun s -> SS.replace s field value) s
     in
-    if Val.equal (Val.top_value (field.ftype)) value
+    if Val.is_top_value value field.ftype
     then normalize_top replaced
     else replaced
 
@@ -283,10 +285,33 @@ struct
       let first_key = List.hd struct_fields in
       Some first_key
 
+  let every_field_top ss =
+    SS.fold (fun field value acc -> acc && Val.is_top_value value field.ftype) ss true
+
+  let create_all_fields_top compinfo =
+    let nstruct = SS.top () in
+    let top_field nstruct fd = SS.replace nstruct fd (Val.top_value fd.ftype) in
+    List.fold_left top_field nstruct compinfo.cfields
+
+  (* If any of the variants is all top, it automatically ruins the other variants,
+      so we can just shorten it to top *)
+  let normalize_top s =
+    if SD.is_top s || SD.is_empty s then s else
+    let sample_ss = List.hd (SD.elements s) in
+    match SS.keys sample_ss with
+    | [] -> s
+    | field::_ ->
+      if SD.exists (fun ss -> every_field_top ss) s
+      then (
+        if Messages.tracing then Messages.tracel "normalize-top" "Normalize top - s:\n%a\n---------\n" SD.pretty s;
+        SD.top ()
+      )
+      else s
+
   let replace s field value =
     let result_replace =
       if SD.is_top s
-      then SD.singleton (SS.replace (SS.top ()) field value)
+      then SD.singleton (SS.replace (create_all_fields_top field.fcomp) field value)
       else SD.map (fun s -> SS.replace s field value) s
     in
     let result_key =
@@ -298,7 +323,9 @@ struct
           else result_replace
     in
     if Messages.tracing then Messages.tracel "bot-bug" "Replace with s:\n%a\nfield:\n%a\nvalue:\n%a\nresult:\n%a\n---------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value SD.pretty result_key;
-    result_key
+    if Val.is_top_value value field.ftype
+    then normalize_top result_key
+    else result_key
 
   let get_value_meet ss field value =
     let current = SS.get ss field in
@@ -321,7 +348,7 @@ struct
   let replace_with_meet s field value =
     let result_replace =
       if SD.is_top s
-      then SD.singleton (SS.replace (SS.top ()) field value)
+      then SD.singleton (SS.replace (create_all_fields_top field.fcomp) field value)
       else SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s
     in
     (* Normalization not needed;
