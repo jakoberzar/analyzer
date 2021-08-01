@@ -174,14 +174,14 @@ struct
   let is_top_value x (t: typ) =
     match x with
     | `Int x -> ID.is_top_of (Cilfacade.get_ikind (t)) x
-    | `Address x -> AD.is_top x
+    | `Address x -> AD.equal x AD.top_ptr
     | `Struct x -> Structs.is_top x
     | `Union x -> Unions.is_top x
     | `Array x -> CArrays.is_top x
     | `List x -> Lists.is_top x
     | `Blob x -> Blobs.is_top x
-    | `Bot -> false
     | `Top -> true
+    | `Bot -> false
 
     let rec zero_init_value (t:typ): t =
       let zero_init_comp compinfo: Structs.t =
