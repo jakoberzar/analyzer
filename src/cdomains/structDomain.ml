@@ -199,14 +199,20 @@ struct
       | [] -> SS.bot ()
       | h::t -> List.fold_left (fun el acc -> SS.join el acc) h t
 
-  let on_joint_ss f s = f (join_ss s)
+  let on_joint_ss f default s =
+    if SD.is_bot s then default else f (join_ss s)
 
-  let fold f = on_joint_ss (SS.fold f)
+  let fold f s a =
+    if Messages.tracing && SD.is_bot s then Messages.tracel "normalize-top" "fold empty!\ns:%a\n" pretty s;
+    on_joint_ss (fun ss -> SS.fold f ss a) a s
 
-  let map f s = normalize_top (SD.singleton (on_joint_ss (SS.map f) s))
+  let map f s =
+    if SD.is_bot s || SD.is_top s
+    then s
+    else normalize_top (SD.singleton (on_joint_ss (SS.map f) (SS.top ()) s))
 
-  let cardinal = on_joint_ss (SS.cardinal)
-  let keys = on_joint_ss (SS.keys)
+  let cardinal = on_joint_ss (SS.cardinal) 0
+  let keys = on_joint_ss (SS.keys) []
 
   (* Add these or the byte code will segfault ... *)
   let equal x y = SD.equal x y
