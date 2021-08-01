@@ -155,7 +155,7 @@ struct
   let replace s field value =
     if Messages.tracing then Messages.tracel "normalize-top" "Normalize top Replace - s:\n%a\nfield:%a\nvalue: %a\n---------\n" SD.pretty s Basetype.CilField.pretty field Val.pretty value ;
     let replaced =
-      if SD.is_top s
+      if SD.is_top s && not (Val.is_top_value value field.ftype)
       then SD.singleton (SS.replace (create_all_fields_top field.fcomp) field value)
       else SD.map (fun s -> SS.replace s field value) s
     in
@@ -168,7 +168,7 @@ struct
     Val.meet value current
 
   let replace_with_meet s field value =
-    if SD.is_top s
+    if SD.is_top s && not (Val.is_top_value value field.ftype)
     then SD.singleton (SS.replace (create_all_fields_top field.fcomp) field value)
     else SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s
     (* Does not need to normalize top, since refine can only improve values and no top variant exists before! *)
@@ -316,7 +316,7 @@ struct
 
   let replace s field value =
     let result_replace =
-      if SD.is_top s
+      if SD.is_top s && not (Val.is_top_value value field.ftype)
       then SD.singleton (SS.replace (create_all_fields_top field.fcomp) field value)
       else SD.map (fun s -> SS.replace s field value) s
     in
@@ -353,7 +353,7 @@ struct
 
   let replace_with_meet s field value =
     let result_replace =
-      if SD.is_top s
+      if SD.is_top s && not (Val.is_top_value value field.ftype)
       then SD.singleton (SS.replace (create_all_fields_top field.fcomp) field value)
       else SD.map (fun ss -> SS.replace ss field (get_value_meet ss field value)) s
     in
@@ -363,6 +363,7 @@ struct
     - if they are <, the new value is not lower -> it won't be replaced anyways
     - if they are boundaries; values are [1,2], [3,4] while the new value is [2,3]
       - should be replaced with meet -> [2,2], [3,3] -> still stay disjunctive *)
+    (* Top normalization also not needed because the values can only improve with a meet *)
     result_replace
 
   let refine s field value =
@@ -372,11 +373,13 @@ struct
     result
 
   (* Check if a variant is above / below from this one in a given field *)
+  (* DEPRECATED, you probably want variant_comparable ! *)
   let variant_above_below ss field value =
     let current = SS.get ss field in
     Val.leq current value || Val.leq value current
 
   (* Get a set of all variants that are above / below this one  *)
+  (* DEPRECATED, you probably want including_variants ! *)
   let variants_above_below s field value =
     if SD.is_top s
     then s
@@ -498,7 +501,8 @@ struct
       let new_x = join_comparable_key_variants x_with_y in
       new_x
     in
-    join_x_y x y
+    let joint = join_x_y x y in
+    normalize_top joint
 
   let meet x y =
     let result = meet_narrow_common SS.meet x y in
